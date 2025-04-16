@@ -1,10 +1,10 @@
 # AWS-VPC-Infrastructure-Automation
-![Infar Diagram](https://github.com/mhmdmstfa2010/AWS-VPC-Infrastructure-Automation/blob/main/VPC.png)
 This project is part of the [AWS DevOps90%](https://cloudnativebasecamp.com/courses/aws-devops-90/) course by [Ahmed Metwally](https://cloudnativebasecamp.com/) at CloudNativeBaseCamp.
 
 ## Task Overview
 
 This task focuses on automating AWS VPC infrastructure creation using Bash scripting, covering fundamental networking concepts in AWS.
+![Infar Diagram](https://github.com/mhmdmstfa2010/AWS-VPC-Infrastructure-Automation/blob/main/VPC.png)
 
 ## Infrastructure Components
 
