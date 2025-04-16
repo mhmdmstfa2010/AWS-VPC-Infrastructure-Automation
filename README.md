@@ -35,3 +35,5 @@ This task helps students:
 ```bash
 chmod +x vpc-task.sh
 ./vpc-task.sh
+
+![Infar Diagram](https://github.com/mhmdmstfa2010/AWS-VPC-Infrastructure-Automation/blob/main/VPC.png)
