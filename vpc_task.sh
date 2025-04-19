@@ -23,12 +23,14 @@ if [ -z "$vpc_check" ]; then
   fi
 
   echo "VPC created"
+  echo "Waiting for VPC to become available..."
+  aws ec2 wait vpc-available --vpc-ids "$vpc_id"
 
-else
-  echo "VPC already exists"
-  vpc_id=$vpc_check
-  echo $vpc_id
-fi
+  else
+    echo "VPC already exists"
+    vpc_id=$vpc_check
+    echo $vpc_id
+  fi
 
 # create subnet
 create_subnet()
@@ -74,6 +76,9 @@ sub3_id=$sub_id
 create_subnet 4 b private
 sub4_id=$sub_id
 
+
+aws ec2 wait subnet-available --subnet-ids "$sub1_id" "$sub2_id" "$sub3_id" "$sub4_id"
+
 # create igw for public subnets
 igw_check=$(aws ec2 describe-internet-gateways  --filters Name=tag:Name,Values=DevOps-test-igw | grep -oP '(?<="InternetGatewayId": ")[^"]*') 
 if [ -z "$igw_check" ]; then
@@ -99,6 +104,8 @@ else
   igw_id=$igw_check
   echo $igw_id
   
+aws ec2 wait internet-gateway-exists --internet-gateway-ids "$igw_id"  
+
   # Check if IGW is attached to our VPC
   igw_attach=$(aws ec2 describe-internet-gateways --internet-gateway-ids $igw_id | grep -oP '(?<="VpcId": ")[^"]*')
   if [ "$igw_attach" != "$vpc_id" ]; then
@@ -123,7 +130,7 @@ if [ -z "$pub_rt_check" ]; then
     exit 1
   fi 
   echo "public route table created"
-  
+  sleep 20
   # create public route 
   echo "Creating default route to IGW..."
   route_result=$(aws ec2 create-route --route-table-id $pub_rt_id \
@@ -171,5 +178,100 @@ echo $private_rt_id
 echo "Associating private subnets with private route table..."
 aws ec2 associate-route-table --route-table-id $private_rt_id --subnet-id $sub3_id
 aws ec2 associate-route-table --route-table-id $private_rt_id --subnet-id $sub4_id
+
+
+
+# Check for existing ACL in the VPC (corrected filter)
+ACL_check=$(aws ec2 describe-network-acls --filters Name=vpc-id,Values=$vpc_id Name=tag:Name,Values=DevOps-test-acl | grep -oP '(?<="NetworkAclId": ")[^"]*' )
+
+if [ -z "$ACL_check" ]; then
+  echo "ACL will be created"
+  ACL_result=$(aws ec2 create-network-acl \
+    --vpc-id "$vpc_id" \
+    --tag-specifications 'ResourceType=network-acl,Tags=[{Key=Name,Value=DevOps-test-acl}]' \
+    --output json | grep -oP '(?<="NetworkAclId": ")[^"]*' )
+  
+  # Check if the create command succeeded
+  if [ -z $ACL_result ]; then
+    echo "Error: Failed to create ACL"
+    exit 1
+  fi
+   echo "ACL created successfully"
+  echo "$ACL_result"
+  ACL_id="$ACL_result"
+    
+else
+  echo "ACL already exists: $ACL_check"
+  ACL_id="$ACL_check"
+fi
+
+# add inpound rule to allow all traffic only from my pc
+
+MY_IP=$(curl -s https://checkip.amazonaws.com)
+
+   inbound_result=$(aws ec2 create-network-acl-entry \
+    --network-acl-id $ACL_id \
+    --rule-number 5 \
+    --protocol -1 \
+    --ingress \
+    --rule-action allow \
+    --cidr-block ${MY_IP}/32)
+  
+   if [[ "$inbound_result" == *"InvalidPermission.Duplicate"* ]]; then
+  echo " Inbound rule already exists"
+  
+  elif [[ "$inbound_result" == *"error"* ]]; then
+  echo " Error creating inbound rule: $inbound_result"
+  exit 1
+  
+  else
+  echo " Inbound rule created for ${MY_IP}"
+  fi
+
+# Add outbound rule (to your PC)
+   outbound_result=$(aws ec2 create-network-acl-entry \
+    --network-acl-id $ACL_id \
+    --rule-number 6 \
+    --protocol -1 \
+    --egress \
+    --rule-action allow \
+    --cidr-block ${MY_IP}/32)
+  
+   if [[ "$outbound_result" == *"InvalidPermission.Duplicate"* ]]; then
+  echo " Outbound rule already exists"
+  
+  elif [[ "$outbound_result" == *"error"* ]]; then
+  echo " Error creating Outbound rule: $outbound_result"
+  exit 1
+  
+  else
+  echo " Outbound rule created for ${MY_IP}"
+  fi
+
+
+# Associate the first public subnet to the ACL
+
+# Get just the association ID (not full JSON)
+current_assoc_id=$(aws ec2 describe-network-acls \
+  --filters Name=association.subnet-id,Values=$sub1_id \
+  --query 'NetworkAcls[].Associations[?SubnetId==`'"$sub1_id"'`].NetworkAclAssociationId' \
+  --output text)
+
+# Replace the association
+aws ec2 replace-network-acl-association \
+  --association-id $current_assoc_id \
+  --network-acl-id $ACL_id
+
+# Verify by checking the current NACL ID for the subnet
+current_nacl_id=$(aws ec2 describe-network-acls \
+  --filters Name=association.subnet-id,Values=$sub1_id \
+  --query 'NetworkAcls[].Associations[?SubnetId==`'"$sub1_id"'`].NetworkAclId' \
+  --output text)
+
+if [ "$current_nacl_id" == "$ACL_id" ]; then
+  echo "Success - subnet is now associated with the correct NACL"
+else
+  echo "Failed - subnet is still associated with NACL $current_nacl_id"
+fi
 
 echo "VPC setup completed successfully!"
